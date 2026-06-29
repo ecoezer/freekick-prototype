@@ -98,6 +98,12 @@ public class BallStateTracker : MonoBehaviour
         isTracking     = false;
         slowFrameCount = 0;
 
+        // Topun sonsuza kadar çok küçük değerlerde kaymasını engellemek için
+        // fiziksel olarak tamamen donduruyoruz.
+        rb.linearVelocity = Vector3.zero;
+        rb.angularVelocity = Vector3.zero;
+        rb.Sleep();
+
         OnBallStopped?.Invoke();
     }
 }

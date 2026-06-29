@@ -20,7 +20,7 @@ public class BallResetter : MonoBehaviour
 
     [Header("Reset Settings")]
     [Tooltip("Top durduğunda, sahneyi sıfırlamadan önce kaç saniye beklenir.")]
-    [SerializeField, Range(0f, 5f)] private float resetDelay = 3f;
+    [SerializeField, Range(0f, 5f)] private float resetDelay = 2f;
 
     // ─── Events ──────────────────────────────────────────────
 
