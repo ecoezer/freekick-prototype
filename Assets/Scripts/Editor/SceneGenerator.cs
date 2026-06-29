@@ -84,6 +84,7 @@ public class SceneGenerator
         SerializedObject resetterSO = new SerializedObject(resetter);
         resetterSO.FindProperty("ballStateTracker").objectReferenceValue = tracker;
         resetterSO.FindProperty("ballLauncher").objectReferenceValue = launcher;
+        resetterSO.FindProperty("ballPhysicsController").objectReferenceValue = physicsController;
         resetterSO.ApplyModifiedProperties();
 
         SerializedObject controllerSO = new SerializedObject(controller);

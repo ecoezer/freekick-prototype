@@ -15,8 +15,9 @@ public class BallResetter : MonoBehaviour
     // ─── Inspector ───────────────────────────────────────────
 
     [Header("References")]
-    [SerializeField] private BallStateTracker ballStateTracker;
-    [SerializeField] private BallLauncher     ballLauncher;
+    [SerializeField] private BallStateTracker       ballStateTracker;
+    [SerializeField] private BallLauncher            ballLauncher;
+    [SerializeField] private BallPhysicsController   ballPhysicsController;
 
     [Header("Reset Settings")]
     [Tooltip("Top durduğunda, sahneyi sıfırlamadan önce kaç saniye beklenir.")]
@@ -73,10 +74,14 @@ public class BallResetter : MonoBehaviour
         // 1. BallLauncher'ın iç durumunu temizle (isInFlight = false, hız = 0).
         ballLauncher.ReadyForNextShot();
 
-        // 2. Fiziksel pozisyonu serbest vuruş başlangıcına geri taşı.
+        // 2. BallPhysicsController'ın state'ini Idle'a döndür.
+        if (ballPhysicsController != null)
+            ballPhysicsController.ResetState();
+
+        // 3. Fiziksel pozisyonu serbest vuruş başlangıcına geri taşı.
         transform.SetPositionAndRotation(startPosition, startRotation);
 
-        // 3. Koordinatörleri bilgilendir (input aç, kamera geri dön).
+        // 4. Koordinatörleri bilgilendir (input aç, kamera geri dön).
         OnBallReset?.Invoke();
     }
 }

@@ -1,46 +1,84 @@
 using UnityEngine;
+using System;
 
 /// <summary>
-/// Topun havadaki ve yerdeki fiziksel sürtünme (drag) değerlerini yönetir.
-/// Zemin temasını algılar ve duruma göre Rigidbody'yi günceller.
+/// Ball Simulation Document v1'e göre topun tüm fizik davranışını yönetir.
 ///
-/// Sorumluluk (SRP): 
-///   - Yalnızca fizik (sürtünme) yönetimi ve çarpışma tespiti.
+/// Sorumluluk (SRP): Havadaki ve yerdeki fizik kuvvetlerinin hesaplanması.
+///   - Aerodinamik hava direnci (v² orantılı drag)
+///   - Magnus etkisi (falso / curve)
+///   - Zemin sürtünmesi (rolling friction)
+///   - Sekme sönümleme (bounce kill)
+///
+/// Unity'nin varsayılan drag değeri 0 tutulur.
+/// Tüm kuvvetler FixedUpdate içinde velocity manipülasyonu ile uygulanır.
+/// PhysX sadece çarpışma çözümlemesi (collision resolution) için kullanılır.
 /// </summary>
 [RequireComponent(typeof(Rigidbody))]
 public class BallPhysicsController : MonoBehaviour
 {
-    // ─── Inspector ───────────────────────────────────────────
+    // ─── Inspector: References ───────────────────────────────
 
     [Header("References")]
     [Tooltip("Top fırlatıldığında haberdar olmak için referans.")]
     [SerializeField] private BallLauncher ballLauncher;
 
-    [Header("Physics Settings - Air (InFlight)")]
-    [Tooltip("Havadayken uygulanacak doğrusal sürtünme (Hava direnci).")]
-    [SerializeField] private float airDrag = 0.5f;
-    [Tooltip("Havadayken uygulanacak açısal sürtünme.")]
-    [SerializeField] private float airAngularDrag = 0.05f;
+    // ─── Inspector: Aerodynamic Drag (Hava Direnci) ──────────
 
-    [Header("Physics Settings - Ground (Rolling)")]
-    [Tooltip("Yere temas ettiğinde uygulanacak doğrusal sürtünme (Çim sürtünmesi).")]
-    [SerializeField] private float groundDrag = 2.5f;
-    [Tooltip("Yere temas ettiğinde uygulanacak açısal sürtünme.")]
-    [SerializeField] private float groundAngularDrag = 2.5f;
-    [Tooltip("Zemin objelerinin etiketi (Zemin algılaması için).")]
-    [SerializeField] private string groundTag = "Untagged";
+    [Header("Air Physics - Aerodynamic Drag")]
+    [Tooltip("Hava direnci katsayısı. Yüksek değer = top havada daha çabuk yavaşlar.")]
+    [SerializeField, Range(0.001f, 0.05f)] private float airDragCoefficient = 0.01f;
+
+    // ─── Inspector: Magnus Effect (Falso) ────────────────────
+
+    [Header("Air Physics - Magnus Effect (Spin)")]
+    [Tooltip("Magnus kuvvet katsayısı. Yüksek değer = daha belirgin falso etkisi.")]
+    [SerializeField, Range(0f, 1f)] private float magnusCoefficient = 0.15f;
+
+    // ─── Inspector: Ground Friction (Zemin Sürtünmesi) ───────
+
+    [Header("Ground Physics - Friction")]
+    [Tooltip("Zemin sürtünme katsayısı. Yüksek değer = top yerde daha çabuk durur.")]
+    [SerializeField, Range(0.5f, 10f)] private float groundFriction = 3f;
+
+    // ─── Inspector: Bounce Kill (Sekme Sönümleme) ────────────
+
+    [Header("Ground Physics - Bounce Kill")]
+    [Tooltip("Bu dikey hız eşiğinin altındaki sekmeler sıfırlanır (jitter önleme).")]
+    [SerializeField, Range(0.1f, 2f)] private float bounceKillThreshold = 0.5f;
+
+    // ─── State Enum ──────────────────────────────────────────
+
+    private enum BallPhysicsState
+    {
+        Idle,       // Şut bekleniyor, fizik hesabı yapılmaz.
+        InFlight,   // Havada — aerodinamik drag + magnus uygulanır.
+        OnGround    // Yerde — zemin sürtünmesi uygulanır.
+    }
+
+    // ─── Events ──────────────────────────────────────────────
+
+    /// <summary>
+    /// Top zemine ilk temas ettiğinde tetiklenir.
+    /// İleride ses efektleri, parçacık efektleri vb. için kullanılabilir.
+    /// </summary>
+    public event Action OnGroundContact;
 
     // ─── Private State ───────────────────────────────────────
 
     private Rigidbody rb;
-    private bool isInFlight;
+    private BallPhysicsState currentState = BallPhysicsState.Idle;
 
     // ─── Unity Lifecycle ─────────────────────────────────────
 
     private void Awake()
     {
         rb = GetComponent<Rigidbody>();
-        SetIdlePhysics();
+
+        // Unity'nin varsayılan drag'ını devre dışı bırak.
+        // Tüm sürtünme hesaplamaları bu script tarafından yapılacak.
+        rb.drag = 0f;
+        rb.angularDrag = 0f;
     }
 
     private void OnEnable()
@@ -55,59 +93,133 @@ public class BallPhysicsController : MonoBehaviour
             ballLauncher.OnBallFired -= HandleBallFired;
     }
 
+    private void FixedUpdate()
+    {
+        switch (currentState)
+        {
+            case BallPhysicsState.Idle:
+                // Hiçbir fizik hesabı yapılmaz.
+                break;
+
+            case BallPhysicsState.InFlight:
+                ApplyAerodynamicDrag();
+                ApplyMagnusEffect();
+                break;
+
+            case BallPhysicsState.OnGround:
+                ApplyGroundFriction();
+                break;
+        }
+    }
+
     private void OnCollisionEnter(Collision collision)
     {
-        // Eğer top havadaysa ve zemine (veya başka bir yüzeye) çarptıysa Rolling (Yerde) duruma geç
-        if (isInFlight && (collision.gameObject.CompareTag(groundTag) || collision.gameObject.name == "Pitch"))
+        if (currentState == BallPhysicsState.InFlight)
         {
-            SetRollingPhysics();
+            // Havadan yere geçiş.
+            currentState = BallPhysicsState.OnGround;
+
+            // Sekme sönümleme: Dikey hız çok düşükse sıfırla.
+            KillBounceIfNeeded();
+
+            OnGroundContact?.Invoke();
         }
+        else if (currentState == BallPhysicsState.OnGround)
+        {
+            // Yerdeyken tekrar sekme olursa (örn: direğe çarpıp geri gelme).
+            KillBounceIfNeeded();
+        }
+    }
+
+    // ─── Public API ──────────────────────────────────────────
+
+    /// <summary>
+    /// BallResetter tarafından çağrılır. State'i Idle'a döndürür.
+    /// </summary>
+    public void ResetState()
+    {
+        currentState = BallPhysicsState.Idle;
+        rb.drag = 0f;
+        rb.angularDrag = 0f;
     }
 
     // ─── Event Handlers ──────────────────────────────────────
 
     private void HandleBallFired()
     {
-        SetInFlightPhysics();
+        currentState = BallPhysicsState.InFlight;
     }
 
-    // ─── Private Methods ─────────────────────────────────────
+    // ─── Air Physics ─────────────────────────────────────────
 
     /// <summary>
-    /// Top fırlatılmayı beklerken (Idle) sürtünme durumu.
-    /// Zemin üzerindeymiş gibi yüksek drag ile bekletilir.
+    /// Aerodinamik hava direnci: F_drag = -k * |v|² * v_hat
+    /// Hızın karesiyle orantılı — sert şutlar hızla yavaşlar,
+    /// yavaş toplar neredeyse etkilenmez.
     /// </summary>
-    private void SetIdlePhysics()
+    private void ApplyAerodynamicDrag()
     {
-        isInFlight = false;
-        rb.linearDamping = groundDrag;   // linearVelocity sürtünmesi (Unity 6.x linearDamping olarak adlandırılabilir, ancak drag da kullanılabilir. Scriptte standart kullanacağız).
-        rb.drag = groundDrag; 
-        rb.angularDrag = groundAngularDrag;
-    }
+        Vector3 velocity = rb.linearVelocity;
+        float speed = velocity.magnitude;
 
-    /// <summary>
-    /// Şut çekildiğinde (Havadayken) uygulanacak fizik ayarları.
-    /// Düşük drag, Magnus ve falso (ileride) için uygun zemin hazırlar.
-    /// </summary>
-    private void SetInFlightPhysics()
-    {
-        isInFlight = true;
-        
-        // Rigidbody ayarları
-        rb.drag = airDrag;
-        rb.angularDrag = airAngularDrag;
+        if (speed < 0.01f) return;
+
+        // F_drag = -coefficient * |v|^2 * v_normalized
+        // a_drag = F_drag / mass
+        Vector3 dragAcceleration = -airDragCoefficient * speed * velocity;
+        rb.linearVelocity += dragAcceleration * Time.fixedDeltaTime;
     }
 
     /// <summary>
-    /// Zeminle temas sonrasında (Yuvarlanma) devreye girecek fizik ayarları.
-    /// Topun doğal şekilde yavaşlamasını sağlar.
+    /// Magnus etkisi: F_magnus = Cm * (ω × v)
+    /// Topun dönüş yönüne göre havada eğrilmesini sağlar (falso).
     /// </summary>
-    private void SetRollingPhysics()
+    private void ApplyMagnusEffect()
     {
-        isInFlight = false;
-        
-        // Yüksek zemin sürtünmesi
-        rb.drag = groundDrag;
-        rb.angularDrag = groundAngularDrag;
+        Vector3 angularVel = rb.angularVelocity;
+
+        // Spin yoksa Magnus etkisi hesaplanmaz.
+        if (angularVel.sqrMagnitude < 0.001f) return;
+
+        Vector3 magnusForce = magnusCoefficient * Vector3.Cross(angularVel, rb.linearVelocity);
+        Vector3 magnusAcceleration = magnusForce / rb.mass;
+        rb.linearVelocity += magnusAcceleration * Time.fixedDeltaTime;
+    }
+
+    // ─── Ground Physics ──────────────────────────────────────
+
+    /// <summary>
+    /// Zemin sürtünmesi: v_new = v_old * (1 - μ * dt)
+    /// Lineer bir yavaşlama modeli. Top doğal şekilde yavaşlayıp durur.
+    /// </summary>
+    private void ApplyGroundFriction()
+    {
+        Vector3 velocity = rb.linearVelocity;
+
+        // Dikey bileşene sürtünme uygulanmaz (yerçekimi zaten halleder).
+        Vector3 horizontalVel = new Vector3(velocity.x, 0f, velocity.z);
+        float frictionFactor = 1f - (groundFriction * Time.fixedDeltaTime);
+        frictionFactor = Mathf.Max(frictionFactor, 0f); // Negatife düşmesini engelle.
+
+        rb.linearVelocity = new Vector3(
+            horizontalVel.x * frictionFactor,
+            velocity.y,
+            horizontalVel.z * frictionFactor
+        );
+    }
+
+    /// <summary>
+    /// Sekme sönümleme (Bounce Kill):
+    /// Dikey hız çok düşükse sıfırlanır. Bu sayede top küçük
+    /// sekmelerle (jitter) titremek yerine yere oturur.
+    /// </summary>
+    private void KillBounceIfNeeded()
+    {
+        Vector3 velocity = rb.linearVelocity;
+
+        if (Mathf.Abs(velocity.y) < bounceKillThreshold)
+        {
+            rb.linearVelocity = new Vector3(velocity.x, 0f, velocity.z);
+        }
     }
 }
