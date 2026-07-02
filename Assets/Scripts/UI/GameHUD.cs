@@ -261,20 +261,20 @@ public class GameHUD : MonoBehaviour
         curveMarker = marker.rectTransform;
         SetRect(curveMarker, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(6, 26));
 
-        // Uç etiketleri: A (sol falso) / D (sağ falso).
-        Text aHint = MakeText(bottomPanel.transform, "CurveHintA", 20, FontStyle.Bold, TextAnchor.MiddleCenter);
-        aHint.text = "A";
-        aHint.color = CurveLeft;
-        SetRect(aHint.rectTransform, new Vector2(1, 0), new Vector2(1, 0), new Vector2(-86, 18), new Vector2(30, 30));
+        // Uç etiketleri: SOL / SAĞ falso yönleri.
+        Text leftHint = MakeText(bottomPanel.transform, "CurveHintLeft", 18, FontStyle.Bold, TextAnchor.MiddleCenter);
+        leftHint.text = "SOL";
+        leftHint.color = CurveLeft;
+        SetRect(leftHint.rectTransform, new Vector2(1, 0), new Vector2(1, 0), new Vector2(-96, 18), new Vector2(46, 30));
 
-        Text dHint = MakeText(bottomPanel.transform, "CurveHintD", 20, FontStyle.Bold, TextAnchor.MiddleCenter);
-        dHint.text = "D";
-        dHint.color = CurveRight;
-        SetRect(dHint.rectTransform, new Vector2(1, 0), new Vector2(1, 0), new Vector2(-52, 18), new Vector2(30, 30));
+        Text rightHint = MakeText(bottomPanel.transform, "CurveHintRight", 18, FontStyle.Bold, TextAnchor.MiddleCenter);
+        rightHint.text = "SAĞ";
+        rightHint.color = CurveRight;
+        SetRect(rightHint.rectTransform, new Vector2(1, 0), new Vector2(1, 0), new Vector2(-46, 18), new Vector2(46, 30));
 
         // ── Yardım metni (sol alt) ──
         Text help = MakeText(canvasGO.transform, "HelpText", 22, FontStyle.Normal, TextAnchor.LowerLeft);
-        help.text  = "Fare: Nişan  ·  Sol tık (basılı tut): Şut gücü  ·  A / D: Falso";
+        help.text  = "Fare: Nişan  ·  Basılı tut: Güç dolar  ·  Dolunca falso ibresi salınır  ·  Bırak: Şut";
         help.color = new Color(1f, 1f, 1f, 0.6f);
         SetRect(help.rectTransform, new Vector2(0, 0), new Vector2(0, 0), new Vector2(24, 18), new Vector2(900, 30));
     }

@@ -20,8 +20,12 @@ public class GameManager : MonoBehaviour
     [SerializeField] private Transform     goalCenter;
 
     [Header("Freekick Spot Randomization")]
-    [SerializeField] private float minDistance = 16f;
-    [SerializeField] private float maxDistance = 26f;
+    [Tooltip("Kale çizgisinden dik derinlik (m). Ceza sahası 16.5 m — top asla içine düşmez.")]
+    [SerializeField] private float minDepth = 17f;
+
+    [Tooltip("Kale çizgisinden dik derinlik (m). Ceza sahası çizgisinin en fazla 10 m gerisi.")]
+    [SerializeField] private float maxDepth = 26.5f;
+
     [SerializeField] private float maxAngleDeg = 32f;
     [Tooltip("Topun yerden yüksekliği (yarıçap).")]
     [SerializeField] private float ballRadius  = 0.11f;
@@ -46,7 +50,7 @@ public class GameManager : MonoBehaviour
     }
 
     /// <summary>Konsoldan hangi build'in çalıştığını doğrulamak için sürüm etiketi.</summary>
-    public const string BuildVersion = "v5";
+    public const string BuildVersion = "v6";
 
     /// <summary>
     /// Kaleden sahaya bakan yön. Kale transformunun rotasyonuna GÜVENİLMEZ;
@@ -126,14 +130,19 @@ public class GameManager : MonoBehaviour
     private Vector3 PickRandomSpot()
     {
         float angle = UnityEngine.Random.Range(-maxAngleDeg, maxAngleDeg);
-        float dist  = UnityEngine.Random.Range(minDistance, maxDistance);
+
+        // Derinlik = kale çizgisine DİK mesafe. Ceza sahası 16.5 m derinliğinde;
+        // 17–26.5 m aralığı top daima saha çizgisi dışında, en fazla 10 m geride kalır.
+        // Açılı noktalarda gerçek mesafe dist = depth / cos(angle) olur.
+        float depth = UnityEngine.Random.Range(minDepth, maxDepth);
+        float dist  = depth / Mathf.Cos(angle * Mathf.Deg2Rad);
 
         // fieldDir topun İLK dizilişinden türetildi — spot her zaman saha tarafında.
         Vector3 dir  = Quaternion.AngleAxis(angle, Vector3.up) * fieldDir;
         Vector3 spot = goalCenter.position + dir * dist;
         spot.y = ballRadius;
 
-        Debug.Log($"[GameManager] Yeni frikik noktası: {spot:F1} (açı {angle:F0}°, mesafe {dist:F1} m)");
+        Debug.Log($"[GameManager] Yeni frikik noktası: {spot:F1} (açı {angle:F0}°, derinlik {depth:F1} m, mesafe {dist:F1} m)");
         return spot;
     }
 

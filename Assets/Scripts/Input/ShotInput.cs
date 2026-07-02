@@ -2,16 +2,18 @@ using UnityEngine;
 using System;
 
 /// <summary>
-/// Oyuncu fare/klavye girişini dinler ve ShotData üretir.
+/// Oyuncu fare girişini dinler ve ShotData üretir.
 ///
 /// Sorumluluk: YALNIZCA input okuma ve ShotData üretme.
 ///   - Fizik hesabı yapmaz, oyun durumunu bilmez.
 ///   - Yön/hedef hesabını IDirectionProvider'a delege eder (DIP + OCP).
 ///
-/// Kullanım:
-///   Fare        → nişan alma (AimTargetProvider hedefi hesaplar)
-///   Sol tık     → basılı tut: güç yüklenir, bırak: şut
-///   A / D (←/→) → şarj sırasında falso ayarı
+/// Kullanım (iki fazlı basılı tutma):
+///   Faz 1 — GÜÇ : Sol tık basılı tutulur, güç 0'dan %100'e dolar.
+///   Faz 2 — FALSO: Güç dolduktan sonra basılı tutmaya devam edilirse falso
+///                  ibresi önce TAM SOLA, oraya ulaşınca TAM SAĞA doğru salınır
+///                  (ping-pong). Bırakıldığı andaki değer şuta uygulanır.
+///   Bırak → şut. Falso istemiyorsan güç dolar dolmaz bırak (falso 0).
 /// </summary>
 public class ShotInput : MonoBehaviour
 {
@@ -24,9 +26,9 @@ public class ShotInput : MonoBehaviour
     [Tooltip("Bu gücün altındaki bırakışlar şut sayılmaz (yanlışlıkla tık koruması).")]
     [SerializeField, Range(0f, 0.3f)] private float minPowerToFire = 0.07f;
 
-    [Header("Curve Settings")]
-    [Tooltip("A/D basılıyken falsonun saniyedeki değişim hızı.")]
-    [SerializeField, Range(0.5f, 5f)] private float curveChangeSpeed = 1.6f;
+    [Header("Curve Sweep Settings")]
+    [Tooltip("Falso ibresinin salınım hızı (birim/sn). 1.2 ≈ tam sol→tam sağ 1.7 sn.")]
+    [SerializeField, Range(0.3f, 4f)] private float curveSweepSpeed = 1.2f;
 
     [Header("References")]
     [Tooltip("Topu temsil eden Transform. Yön hesabı için başlangıç noktasını belirler.")]
@@ -55,15 +57,23 @@ public class ShotInput : MonoBehaviour
     public float CurrentCurve => currentCurve;
 
     /// <summary>Şu anda güç yükleniyor mu?</summary>
-    public bool IsCharging => isCharging;
+    public bool IsCharging => phase != ChargePhase.Idle;
 
     // ─── Private State ───────────────────────────────────────
 
-    private IDirectionProvider directionProvider;
+    private enum ChargePhase
+    {
+        Idle,   // Basılı değil.
+        Power,  // Güç doluyor.
+        Curve   // Güç doldu, falso ibresi salınıyor.
+    }
+
+    private IDirectionProvider   directionProvider;
     private ITargetPointProvider targetProvider;
+    private ChargePhase phase = ChargePhase.Idle;
     private float currentPower;
     private float currentCurve;
-    private bool  isCharging;
+    private float curveDirection = -1f; // Önce sola.
     private bool  isInputEnabled = true;
 
     // ─── Unity Lifecycle ─────────────────────────────────────
@@ -82,7 +92,9 @@ public class ShotInput : MonoBehaviour
     {
         if (!isInputEnabled) return;
 
-        HandleCharging();
+        if (Input.GetButtonDown("Fire1")) BeginCharge();
+        if (Input.GetButton("Fire1") && phase != ChargePhase.Idle) ContinueCharge();
+        if (Input.GetButtonUp("Fire1") && phase != ChargePhase.Idle) ReleaseShot();
     }
 
     // ─── Public API ──────────────────────────────────────────
@@ -97,77 +109,73 @@ public class ShotInput : MonoBehaviour
 
         if (!enabled)
         {
-            isCharging   = false;
-            currentPower = 0f;
-            currentCurve = 0f;
-            OnPowerChanged?.Invoke(0f);
-            OnCurveChanged?.Invoke(0f);
+            ResetChargeState();
         }
     }
 
     // ─── Private Methods ─────────────────────────────────────
 
-    private void HandleCharging()
-    {
-        if (Input.GetButtonDown("Fire1")) BeginCharge();
-        if (Input.GetButton("Fire1") && isCharging) ContinueCharge();
-        if (Input.GetButtonUp("Fire1") && isCharging) ReleaseShot();
-    }
-
     private void BeginCharge()
     {
-        isCharging   = true;
-        currentPower = 0f;
-        currentCurve = 0f;
+        phase          = ChargePhase.Power;
+        currentPower   = 0f;
+        currentCurve   = 0f;
+        curveDirection = -1f; // Falso salınımı her şutta önce sola başlar.
         OnCurveChanged?.Invoke(0f);
     }
 
     private void ContinueCharge()
     {
-        currentPower = Mathf.Clamp01(currentPower + chargeSpeed * Time.deltaTime);
-        OnPowerChanged?.Invoke(currentPower);
-
-        HandleCurveInput();
-    }
-
-    private void HandleCurveInput()
-    {
-        float dir = 0f;
-        if (Input.GetKey(KeyCode.A) || Input.GetKey(KeyCode.LeftArrow))  dir -= 1f;
-        if (Input.GetKey(KeyCode.D) || Input.GetKey(KeyCode.RightArrow)) dir += 1f;
-
-        if (dir != 0f)
+        if (phase == ChargePhase.Power)
         {
-            currentCurve = Mathf.Clamp(currentCurve + dir * curveChangeSpeed * Time.deltaTime, -1f, 1f);
+            currentPower = Mathf.Clamp01(currentPower + chargeSpeed * Time.deltaTime);
+            OnPowerChanged?.Invoke(currentPower);
+
+            // Güç doldu → falso salınım fazına geç.
+            if (currentPower >= 1f)
+                phase = ChargePhase.Curve;
+        }
+        else // ChargePhase.Curve
+        {
+            currentCurve += curveDirection * curveSweepSpeed * Time.deltaTime;
+
+            // Uçlarda yön değiştir: tam sola ulaşınca sağa, tam sağa ulaşınca sola.
+            if (currentCurve <= -1f) { currentCurve = -1f; curveDirection = 1f; }
+            else if (currentCurve >= 1f) { currentCurve = 1f; curveDirection = -1f; }
+
             OnCurveChanged?.Invoke(currentCurve);
         }
     }
 
     private void ReleaseShot()
     {
-        isCharging = false;
-
         // Kazara tık koruması: neredeyse hiç güç yüklenmediyse şut iptal.
         if (currentPower < minPowerToFire)
         {
-            currentPower = 0f;
-            currentCurve = 0f;
-            OnPowerChanged?.Invoke(0f);
-            OnCurveChanged?.Invoke(0f);
+            ResetChargeState();
             return;
         }
 
         Vector3 direction = directionProvider.GetDirection(ballTransform.position);
+        float   power     = currentPower;
+        float   curve     = currentCurve; // Bırakıldığı andaki falso aynen uygulanır.
 
         ShotData data = targetProvider != null
-            ? new ShotData(direction, currentPower, currentCurve, targetProvider.GetTargetPoint())
-            : new ShotData(direction, currentPower);
+            ? new ShotData(direction, power, curve, targetProvider.GetTargetPoint())
+            : new ShotData(direction, power);
 
-        currentPower = 0f;
-        currentCurve = 0f;
-        OnPowerChanged?.Invoke(0f);
-        OnCurveChanged?.Invoke(0f);
+        ResetChargeState();
 
         OnShotReady?.Invoke(data);
+    }
+
+    private void ResetChargeState()
+    {
+        phase          = ChargePhase.Idle;
+        currentPower   = 0f;
+        currentCurve   = 0f;
+        curveDirection = -1f;
+        OnPowerChanged?.Invoke(0f);
+        OnCurveChanged?.Invoke(0f);
     }
 }
