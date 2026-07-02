@@ -40,11 +40,43 @@ Bu doküman, Freekick oyununun başlangıç prototipi için hazırlanan mimari y
 7. **Reset:** `BallResetter`, topun durduğunu anlar, 3 saniye bekler ve topu sıfırlar. Ardından `OnBallReset` event'ini tetikler.
 8. **End of Loop:** `ShotController` yeni şut atılmasına izin verir, kamera başlangıç pozisyonuna döner.
 
-## 4. İleriye Dönük Genişletilebilirlik (Freeze List)
-Aşağıdaki modüller ileride eklenecek yeni özellikler karşısında (Curve, Spin, Goalkeeper vb.) **değiştirilmeyecektir**:
-- `ShotController` (Sadece koordinatör)
-- `BallStateTracker` (Sadece hızı izler)
-- `BallResetter` (Sadece pozisyonu geri alır)
-- `IDirectionProvider` (Interface sabit kalır)
+## 4. Oyun Katmanı (v2 ile eklendi)
 
-*Gelecekte Eklenecekler:* Nişan alma (`AimDirectionProvider`), falso sistemi (`ShotData`'ya Curve eklenmesi ve Launcher'ın modifikasyonu), Kaleci (`GoalkeeperController`).
+### F. Input v2 (Nişan + Falso)
+- `ITargetPointProvider`: Kale düzlemindeki tam nişan noktasını sağlar.
+- `AimTargetProvider`: Fare → kale düzlemi raycast; yatay/dikey sınırlar içinde nişangâh.
+- `AimReticle`: Nişan noktasında billboard halka çizer (güçle renk değiştirir).
+- `AimVisualController`: Balistik yay önizlemesi — `BallLauncher.ComputeLaunchVelocity`
+  ve `BallPhysicsController` katsayılarıyla gerçek uçuşla tutarlı; yayın %65'i gösterilir.
+- `ShotInput` v2: A/D ile falso (Curve) girişi; `ShotData`'ya Curve + TargetPoint koyar.
+
+### G. Ballistics
+- `BallLauncher.ComputeLaunchVelocity`: hedefe oturan parabol çözümü
+  (yatay hız = Power, dikey hız = dy/t + g·t/2). Falso: çıkış yönü falsonun
+  tersine bükülür, topa Y-spini verilir; Magnus uçuşta hedefe geri kıvırır.
+
+### H. Opponents (Rakipler)
+- `GoalkeeperController`: Idle → Reacting → Diving durum makinesi. Reaksiyon
+  gecikmesi + kesişme tahmini (lineer XZ + yerçekimli Y) + tahmin gürültüsü.
+  Topa teması `OnBallTouched` ile bildirir.
+- `DefensiveWall` / `WallPlayer`: 9.15 m'ye dizilen 3-4 kişilik baraj; şutta zıplar.
+
+### I. Gameplay (Hakem + Döngü)
+- `GoalDetector`: Kale ağzı arkasındaki trigger; component tabanlı top tespiti.
+- `WoodworkNotifier`: Direk/üst direk teması.
+- `MatchReferee`: Sonuç öncelik sırası GOL > KURTARIŞ > BARAJ > DİREK > AUT;
+  9 sn failsafe ile kaçak topu zorla resetler.
+- `GameManager`: Skor/seri/rekor (PlayerPrefs); her şutta rastgele yeni frikik
+  noktası (16-26 m, ±32°) seçer, barajı yeniden dizer.
+
+### J. UI
+- `GameHUD`: Canvas + skor paneli + güç barı + falso göstergesi + sonuç mesajı.
+  Tüm hiyerarşi koddan kurulur; sahnede prefab/sprite gerekmez.
+
+## 5. Sahne Üretimi ve Build
+- `SceneGenerator.GenerateScene` (Editor): saha (şeritli çim, çizgiler), kale
+  (direkler + yarı saydam file + trigger), kaleci, baraj, top, kamera, ışık/sis
+  ve TÜM referans bağlantılarını (SerializedObject) kurar. Materyaller
+  `Assets/Materials` altına asset olarak kaydedilir (build'de pembe obje olmaz).
+- `Builder.BuildWebGL` (Editor): `Builds/WebGL` altına sıkıştırmasız WebGL build.
+- Komut satırı: `Unity -batchmode -quit -projectPath . -executeMethod SceneGenerator.GenerateScene` → ardından `Builder.BuildWebGL`.

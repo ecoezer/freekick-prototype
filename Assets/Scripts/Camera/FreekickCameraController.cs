@@ -24,13 +24,19 @@ public class FreekickCameraController : MonoBehaviour
     [SerializeField] private Transform    ballTransform;
     [SerializeField] private BallLauncher ballLauncher;
     [SerializeField] private BallResetter ballResetter;
+    [SerializeField] private ShotInput    shotInput;
+
+    [Tooltip("Kale merkezi — idle poz her zaman top→kale hattının arkasında kurulur.")]
+    [SerializeField] private Transform    goalTransform;
+
+    private Camera cam;
 
     [Header("Idle Pose")]
-    [Tooltip("Top henüz atılmadığında kameranın top pozisyonuna göre ofseti.")]
-    [SerializeField] private Vector3 idleOffset     = new Vector3(0f, 3f, -6f);
+    [Tooltip("Kameranın topun arkasındaki mesafesi (top→kale hattı üzerinde).")]
+    [SerializeField] private float idleDistance = 6f;
 
-    [Tooltip("Idle modunda kameranın baktığı nokta — top pozisyonuna göre ofset.")]
-    [SerializeField] private Vector3 idleLookOffset = new Vector3(0f, 0.5f, 10f);
+    [Tooltip("Kameranın top üzerindeki yüksekliği.")]
+    [SerializeField] private float idleHeight = 2.8f;
 
     [Header("Follow Mode")]
     [Tooltip("Topu takip ederken kameranın topa göre ofseti.")]
@@ -39,22 +45,39 @@ public class FreekickCameraController : MonoBehaviour
     [Tooltip("Takip yumuşaklığı — yüksek değer daha sert (anlık) takip sağlar.")]
     [SerializeField, Range(1f, 15f)] private float followSmoothing = 6f;
 
+    [Header("Zoom (Juice)")]
+    [SerializeField] private float baseFOV = 60f;
+    [SerializeField] private float zoomedFOV = 55f;
+    [SerializeField] private float zoomSpeed = 5f;
+
     // ─── Private State ───────────────────────────────────────
 
     private bool isFollowing;
+    private float targetFOV;
+    private Vector3 velocity = Vector3.zero;
 
-    // ─── Unity Lifecycle ─────────────────────────────────────
+    private void Awake()
+    {
+        cam = GetComponent<Camera>();
+        if (cam != null)
+        {
+            targetFOV = cam.fieldOfView;
+            baseFOV = cam.fieldOfView;
+        }
+    }
 
     private void OnEnable()
     {
-        ballLauncher.OnBallFired += StartFollowing;
-        ballResetter.OnBallReset += ReturnToIdle;
+        if (ballLauncher != null) ballLauncher.OnBallFired += StartFollowing;
+        if (ballResetter != null) ballResetter.OnBallReset += ReturnToIdle;
+        if (shotInput != null) shotInput.OnPowerChanged += HandlePowerChanged;
     }
 
     private void OnDisable()
     {
-        ballLauncher.OnBallFired -= StartFollowing;
-        ballResetter.OnBallReset -= ReturnToIdle;
+        if (ballLauncher != null) ballLauncher.OnBallFired -= StartFollowing;
+        if (ballResetter != null) ballResetter.OnBallReset -= ReturnToIdle;
+        if (shotInput != null) shotInput.OnPowerChanged -= HandlePowerChanged;
     }
 
     private void LateUpdate()
@@ -65,22 +88,51 @@ public class FreekickCameraController : MonoBehaviour
             FollowBall();
         else
             HoldIdlePose();
+            
+        // FOV Update (Zoom Juice)
+        if (cam != null && cam.fieldOfView != targetFOV)
+        {
+            cam.fieldOfView = Mathf.Lerp(cam.fieldOfView, targetFOV, Time.deltaTime * zoomSpeed);
+        }
     }
 
     // ─── Event Handlers ──────────────────────────────────────
 
-    private void StartFollowing() => isFollowing = true;
-    private void ReturnToIdle()   => isFollowing = false;
+    private void StartFollowing() 
+    {
+        isFollowing = true;
+        targetFOV = baseFOV; // Snap or lerp back to base FOV when shot is fired
+    }
+    
+    private void ReturnToIdle() 
+    {
+        isFollowing = false;
+        targetFOV = baseFOV;
+    }
+    
+    private void HandlePowerChanged(float power)
+    {
+        if (!isFollowing)
+        {
+            targetFOV = Mathf.Lerp(baseFOV, zoomedFOV, power);
+        }
+    }
 
     // ─── Camera Modes ────────────────────────────────────────
 
     private void HoldIdlePose()
     {
-        // Topun pozisyonuna sabit ofset ekle.
-        transform.position = ballTransform.position + idleOffset;
+        // Top→kale hattının arkasına yerleş; frikik noktası nereye taşınırsa
+        // taşınsın kamera her zaman kaleye bakar.
+        Vector3 toGoal = goalTransform != null
+            ? goalTransform.position - ballTransform.position
+            : Vector3.forward;
+        toGoal.y = 0f;
+        Vector3 dir = toGoal.normalized;
 
-        // Kale yönünde sabit bakış hedefini hesapla.
-        Vector3 lookTarget = ballTransform.position + idleLookOffset;
+        transform.position = ballTransform.position - dir * idleDistance + Vector3.up * idleHeight;
+
+        Vector3 lookTarget = ballTransform.position + dir * 10f + Vector3.up * 1.2f;
         transform.LookAt(lookTarget);
     }
 
@@ -89,12 +141,9 @@ public class FreekickCameraController : MonoBehaviour
         // Hedef pozisyonu: topun anlık pozisyonu + ofset.
         Vector3 targetPosition = ballTransform.position + followOffset;
 
-        // Yumuşak geçiş için Lerp kullan.
-        transform.position = Vector3.Lerp(
-            transform.position,
-            targetPosition,
-            followSmoothing * Time.deltaTime
-        );
+        // SmoothDamp for AAA camera lag feel (0.15s delay roughly represented by 1f/followSmoothing)
+        float smoothTime = 1f / Mathf.Clamp(followSmoothing, 1f, 15f);
+        transform.position = Vector3.SmoothDamp(transform.position, targetPosition, ref velocity, smoothTime);
 
         // Her frame topu izle.
         transform.LookAt(ballTransform.position);

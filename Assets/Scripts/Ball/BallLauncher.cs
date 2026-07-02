@@ -2,14 +2,16 @@ using UnityEngine;
 using System;
 
 /// <summary>
-/// Topa başlangıç hızı (velocity) atar.
+/// Topa başlangıç hızı (velocity) ve falso spini (angular velocity) atar.
 ///
-/// Sorumluluk (SRP): YALNIZCA şut anında rb.linearVelocity ataması.
-///   - AddForce KULLANILMAZ. Doğrudan velocity ataması yapılır.
-///   - Böylece şut hızı kütle ve frame-rate'den bağımsız, deterministik olur.
+/// Sorumluluk (SRP): YALNIZCA şut anında balistik çözüm + hız ataması.
+///   - Nişangâh noktasına ulaşacak yay (parabol) hesaplanır:
+///       yatay hız  = Power ile doğrusal (min→max)
+///       dikey hız  = hedefe tam oturan balistik çözüm (vy = dy/t + g·t/2)
+///   - Falso: çıkış yönü falsonun tersine bükülür, topa Y-ekseni spini verilir.
+///     Magnus etkisi (BallPhysicsController) topu uçuşta hedefe geri kıvırır.
 ///   - Fizik simülasyonu yapmaz → BallPhysicsController
 ///   - Durma tespiti yapmaz    → BallStateTracker
-///   - Reset mantığı yoktur    → BallResetter
 /// </summary>
 [RequireComponent(typeof(Rigidbody))]
 public class BallLauncher : MonoBehaviour
@@ -17,11 +19,21 @@ public class BallLauncher : MonoBehaviour
     // ─── Inspector ───────────────────────────────────────────
 
     [Header("Shot Speed")]
-    [Tooltip("Power = 1.0 olduğunda topun çıkış hızı (m/s). 36 m/s ≈ 130 km/h.")]
-    [SerializeField, Range(10f, 50f)] private float maxShotSpeed = 36f;
+    [Tooltip("Power = 0 iken yatay çıkış hızı (m/s).")]
+    [SerializeField, Range(5f, 25f)] private float minShotSpeed = 13f;
 
-    [Header("Launch Angle")]
-    [Tooltip("Şutun dikey açısı (derece). 0 = düz, 15 = hafif loblu.")]
+    [Tooltip("Power = 1 iken yatay çıkış hızı (m/s). 32 m/s ≈ 115 km/h.")]
+    [SerializeField, Range(20f, 50f)] private float maxShotSpeed = 32f;
+
+    [Header("Curve (Falso)")]
+    [Tooltip("Tam falsoda çıkış yönünün büküleceği açı (derece). Magnus geri kıvırır.")]
+    [SerializeField, Range(0f, 15f)] private float bendAngleDeg = 6.5f;
+
+    [Tooltip("Tam falsoda topa verilecek Y-ekseni spini (rad/s).")]
+    [SerializeField, Range(0f, 30f)] private float maxSpin = 9f;
+
+    [Header("Fallback (hedefsiz şut)")]
+    [Tooltip("TargetPoint olmayan eski tip şutlarda kullanılan dikey açı.")]
     [SerializeField, Range(0f, 45f)] private float launchAngle = 12f;
 
     // ─── Events ──────────────────────────────────────────────
@@ -47,8 +59,7 @@ public class BallLauncher : MonoBehaviour
     // ─── Public API ──────────────────────────────────────────
 
     /// <summary>
-    /// ShotData'ya göre topa başlangıç hızı atar.
-    /// AddForce yerine doğrudan velocity manipülasyonu kullanılır.
+    /// ShotData'ya göre topa başlangıç hızı ve spin atar.
     /// Top zaten uçuştaysa çağrı güvenli biçimde görmezden gelinir.
     /// </summary>
     public void Fire(ShotData data)
@@ -60,24 +71,55 @@ public class BallLauncher : MonoBehaviour
         }
 
         isInFlight = true;
-
-        // Önceki hareketi temizle.
         ClearPhysicsState();
 
-        // Şut hızını hesapla: Power (0-1) * maxShotSpeed (m/s)
-        float speed = data.Power * maxShotSpeed;
+        Vector3 velocity;
+        Vector3 spin = Vector3.zero;
 
-        // Yön vektörünü dikey açıyla birleştir.
-        // data.Direction yatay düzlemde (XZ) hedefi gösterir.
-        // launchAngle kadar yukarı açı eklenir.
-        Vector3 flatDirection = new Vector3(data.Direction.x, 0f, data.Direction.z).normalized;
-        float   angleRad     = launchAngle * Mathf.Deg2Rad;
-        Vector3 launchDir    = (flatDirection * Mathf.Cos(angleRad) + Vector3.up * Mathf.Sin(angleRad)).normalized;
+        if (data.HasTarget)
+        {
+            velocity = ComputeLaunchVelocity(transform.position, data.TargetPoint,
+                                             data.Power, data.Curve, out spin);
+        }
+        else
+        {
+            // Eski davranış: sabit dikey açı + yön.
+            float speed = Mathf.Lerp(minShotSpeed, maxShotSpeed, data.Power);
+            Vector3 flatDirection = new Vector3(data.Direction.x, 0f, data.Direction.z).normalized;
+            float   angleRad      = launchAngle * Mathf.Deg2Rad;
+            velocity = (flatDirection * Mathf.Cos(angleRad) + Vector3.up * Mathf.Sin(angleRad)).normalized * speed;
+        }
 
-        // Doğrudan velocity ataması — deterministik, kütle-bağımsız.
-        rb.linearVelocity = launchDir * speed;
+        rb.linearVelocity  = velocity;
+        rb.angularVelocity = spin;
 
         OnBallFired?.Invoke();
+    }
+
+    /// <summary>
+    /// Hedef noktaya oturan balistik çıkış hızını hesaplar.
+    /// AimVisualController de yay önizlemesi için aynı hesabı kullanır (tutarlılık).
+    /// </summary>
+    public Vector3 ComputeLaunchVelocity(Vector3 from, Vector3 target,
+                                         float power, float curve, out Vector3 spin)
+    {
+        Vector3 to       = target - from;
+        Vector3 flat     = new Vector3(to.x, 0f, to.z);
+        float   flatDist = Mathf.Max(flat.magnitude, 0.5f);
+
+        float horizontalSpeed = Mathf.Lerp(minShotSpeed, maxShotSpeed, Mathf.Clamp01(power));
+        float flightTime      = flatDist / horizontalSpeed;
+
+        // Balistik dikey hız: hedefin yüksekliğine flightTime anında ulaş.
+        float g  = Mathf.Abs(Physics.gravity.y);
+        float vy = (to.y / flightTime) + 0.5f * g * flightTime;
+
+        // Falso: çıkış yönünü falsonun TERSİNE bük; Magnus uçuşta geri kıvırır.
+        Vector3 flatDir = Quaternion.AngleAxis(-curve * bendAngleDeg, Vector3.up) * flat.normalized;
+
+        spin = Vector3.up * (curve * maxSpin);
+
+        return flatDir * horizontalSpeed + Vector3.up * vy;
     }
 
     /// <summary>
@@ -92,9 +134,6 @@ public class BallLauncher : MonoBehaviour
 
     // ─── Private Helpers ─────────────────────────────────────
 
-    /// <summary>
-    /// Rigidbody'nin linear ve angular hızını sıfırlar.
-    /// </summary>
     private void ClearPhysicsState()
     {
         rb.linearVelocity  = Vector3.zero;

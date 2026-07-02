@@ -10,7 +10,15 @@ public class Builder
         
         // Disable compression to avoid localhost server header issues
         PlayerSettings.WebGL.compressionFormat = WebGLCompressionFormat.Disabled;
-        
+
+        // Gerçekçi görünüm: Linear renk uzayı (WebGL2) + kaliteli gölge/AA.
+        PlayerSettings.colorSpace        = ColorSpace.Linear;
+        QualitySettings.antiAliasing     = 4;
+        QualitySettings.shadowDistance   = 150f;
+        QualitySettings.shadows          = ShadowQuality.All;
+        QualitySettings.shadowResolution = ShadowResolution.High;
+
+
         string[] scenes = { "Assets/Scenes/Main.unity" };
         string buildPath = "Builds/WebGL";
 

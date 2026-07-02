@@ -3,11 +3,6 @@ using UnityEngine;
 /// <summary>
 /// Şut verisini taşıyan saf veri sınıfı (POCO — Plain Old C# Object).
 /// MonoBehaviour değildir; yalnızca veri tutulur, mantık eklenmez.
-///
-/// Genişletilebilirlik:
-///   İleride Curve (float) ve Spin (Vector3) alanları yeni
-///   optional constructor parametresi olarak eklenebilir.
-///   Mevcut alanlar ve imza değişmez.
 /// </summary>
 [System.Serializable]
 public class ShotData
@@ -22,25 +17,49 @@ public class ShotData
 
     /// <summary>
     /// Vuruş gücü. 0 (sıfır) ile 1 (maksimum) arasındadır.
-    /// Constructor'da Clamp01 ile sınırlandırılır.
     /// </summary>
     public float Power { get; }
 
-    // ─── Constructor ─────────────────────────────────────────
+    /// <summary>
+    /// Falso miktarı. -1 (tam sol falso) ile +1 (tam sağ falso) arasındadır.
+    /// </summary>
+    public float Curve { get; }
 
     /// <summary>
-    /// Yeni bir ShotData örneği oluşturur.
+    /// Nişan alınan dünya-uzayı hedef noktası (kale düzlemi üzerinde).
+    /// HasTarget false ise anlamsızdır.
     /// </summary>
-    /// <param name="direction">Vuruş yönü — normalize edilmemiş olabilir, içeride normalize edilir.</param>
-    /// <param name="power">Vuruş gücü — 0 ile 1 arasında clamp edilir.</param>
+    public Vector3 TargetPoint { get; }
+
+    /// <summary>
+    /// TargetPoint geçerli mi? (Nişangâh tabanlı şut / eski yön tabanlı şut ayrımı)
+    /// </summary>
+    public bool HasTarget { get; }
+
+    // ─── Constructors ────────────────────────────────────────
+
+    /// <summary>Eski (yön tabanlı) constructor — geriye dönük uyumluluk.</summary>
     public ShotData(Vector3 direction, float power)
     {
-        Direction = direction.normalized;
-        Power     = Mathf.Clamp01(power);
+        Direction   = direction.normalized;
+        Power       = Mathf.Clamp01(power);
+        Curve       = 0f;
+        TargetPoint = Vector3.zero;
+        HasTarget   = false;
+    }
+
+    /// <summary>Nişangâh tabanlı tam şut verisi.</summary>
+    public ShotData(Vector3 direction, float power, float curve, Vector3 targetPoint)
+    {
+        Direction   = direction.normalized;
+        Power       = Mathf.Clamp01(power);
+        Curve       = Mathf.Clamp(curve, -1f, 1f);
+        TargetPoint = targetPoint;
+        HasTarget   = true;
     }
 
     // ─── Debug ───────────────────────────────────────────────
 
     public override string ToString()
-        => $"ShotData [Direction: {Direction:F2}, Power: {Power:F2}]";
+        => $"ShotData [Dir: {Direction:F2}, Power: {Power:F2}, Curve: {Curve:F2}, Target: {TargetPoint:F2}]";
 }
